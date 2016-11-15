@@ -1,0 +1,611 @@
+<?php
+
+/*
+ *
+ *
+ * payment system - posters can pay for job multiple times
+    -- Right now, payments are processed in a weird way.
+    -- To pay, users really create a node of type "payment"
+    -- We need to make sure that they cannot pay for job multiple times, which probably means implenting something like Unique Field (https://www.drupal.org/project/unique_field) on the reference field to the order.
+    -- I'm open to other suggestions on how to accomplish this.
+ */
+
+
+
+/**
+ * Implements hook_menu()
+ * @return array
+ */
+
+function gladlydo_workflow_menu() {
+
+    $items = array();
+    $items['confirm'] = array(
+        'title' => 'Confirmed',
+        'description' => 'Confirmation page.',
+        'page callback' => 'gladlydo_workflow_test',
+        'type' => MENU_CALLBACK,
+        'access callback' => TRUE,
+    );
+
+    //return $items;
+}
+/*
+function gladlydo_workflow_test() {
+    $order_id = 1129;
+    $order = commerce_order_load($order_id);
+    $line_item_id = $order->commerce_line_items[LANGUAGE_NONE][0]['line_item_id'];
+    $line_item = commerce_line_item_load($line_item_id);
+    //dsm($order, 'order');
+    //dsm($line_item, '$line_item');
+    $params['commerce-order'] = $order;
+    //$params['account'] = $user;
+    $params['line-item'] = $line_item;
+
+    //drupal_mail('gladlydo_workflow', 'notify_doer_job_cancelled', 'mitia-zp@ya.ru', LANGUAGE_NONE, $params);
+    //drupal_set_message('Request has been submitted.');
+
+    //$data['user'] = user_load(4823);
+
+
+    $params['poster'] = user_load(4818);
+    $poster_profile = profile2_load_by_user(4818);
+    $profile_names = array_keys((array) $poster_profile);
+
+    $params['poster']->{$profile_names[0]} = $poster_profile[$profile_names[0]];
+
+
+    $params['doer']= user_load(4823);
+    $doer_profile = profile2_load_by_user(4823);
+    $profile_names = array_keys((array) $doer_profile);
+    $params['doer']->{$profile_names[0]} = $doer_profile[$profile_names[0]];
+
+    //dsm($order, '$order');
+    //dsm($params, 'params');
+    $body = 'The Job (#[commerce-order:order-id]) has been cancelled!
+    [commerce-order:plaintext-product-line-items]';
+
+    //$body = 'text';
+    $text = token_replace($body, $params);
+    //dsm($text);
+
+    return $text;
+}
+*/
+
+/**
+ * Implements hook_commerce_order_presave()
+ * @param $order
+ */
+function gladlydo_workflow_commerce_order_presave($order) {
+    //if status order changed
+    if ($order->status != $order->original->status) {
+        //drupal_set_message("The order status changed from {$order->original->status} to {$order->status}");
+        switch ($order->status) {
+            case 'canceled':
+                $line_item_id = $order->commerce_line_items[LANGUAGE_NONE][0]['line_item_id'];
+
+                $line_item = commerce_line_item_load($line_item_id);
+                //dsm($order, 'order');
+                //dsm($line_item, '$line_item');
+                $author = user_load($order->uid);
+                $params['poster'] = $author;
+                $users_target = field_get_items('commerce_line_item', $line_item, 'field_add_doers', LANGUAGE_NONE);
+                //dsm($users_target, '$users_target');
+                foreach ($users_target as $user_target) {
+                    $uid = $user_target['target_id'];
+                    $user = user_load($uid);
+                    $params['commerce-order'] = $order;
+                    $params['doer'] = $user;
+                    $params['line-item'] = $line_item;
+                    $language = user_preferred_language($user);
+                    //dsm($user->mail, 'mail');
+                    drupal_mail('gladlydo_workflow', 'notify_doer_job_cancelled', $user->mail, $language, $params);
+                }
+
+                $line_item->field_add_doers = NULL;
+                commerce_line_item_save($line_item);
+                entity_get_controller('commerce_line_item')->resetCache(array($line_item->line_item_id));
+                //$wrapper = entity_metadata_wrapper('commerce_order', $order);
+                //$line_items = $wrapper->commerce_line_items;
+
+                break;
+            case 'approved':
+                break;
+            case 'closed_status':
+                $line_item_id = $order->commerce_line_items[LANGUAGE_NONE][0]['line_item_id'];
+                $line_item = commerce_line_item_load($line_item_id);
+                //dsm($line_item, 'line item');
+                if ($line_item->type != 'giftcard_purchase') {
+                    $poster = user_load($order->uid);
+                    $params['commerce-order'] = $order;
+                    $params['poster'] = $poster;
+                    $poster_profile = profile2_load_by_user($order->uid);
+                    $profile_names = array_keys((array) $poster_profile);
+                    if (!empty($profile_names[0])) {
+                        $params['poster']->{$profile_names[0]} = $poster_profile[$profile_names[0]];
+                    }
+
+                    $language = user_preferred_language($poster);
+                    drupal_mail('gladlydo_workflow', 'notify_poster_job_closed', $poster->mail, $language, $params);
+
+                    //dsm($order, 'order');
+                }
+
+                break;
+            case 'live_status':
+                $line_item_id = $order->commerce_line_items[LANGUAGE_NONE][0]['line_item_id'];
+                //dsm($order, 'order');
+                //dsm($line_item_id, 'line item id');
+                $wrapper = entity_metadata_wrapper('commerce_order', $order);
+
+                //dsm($wrapper->commerce_line_item, 'wrapper');
+
+
+                $line_item = commerce_line_item_load($line_item_id);
+                //$line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+
+                $poster = user_load($order->uid);
+                $poster_profile = profile2_load_by_user($order->uid);
+
+                $params['commerce-order'] = $order;
+                //dsm($poster_profile);
+
+                $params['poster'] = $poster;
+                $profile_names = array_keys((array) $poster_profile);
+                if (!empty($profile_names[0])) {
+                    $params['poster']->{$profile_names[0]} = $poster_profile[$profile_names[0]];
+                }
+
+                $users_target = field_get_items('commerce_line_item', $line_item, 'field_add_doers', LANGUAGE_NONE);
+                //dsm($users_target, '$users_target');
+
+                $send_emails = array();
+                if (!empty($users_target)) {
+                    $params['doer'] = array();
+                    foreach ($users_target as $user_target) {
+
+                        $uid = $user_target['target_id'];
+                        $user = user_load($uid);
+                        $doer_profile = profile2_load_by_user($user->uid);
+                        $params_doer['commerce-order'] = $order;
+                        $params_doer['doer'] = $user;
+                        $profile_names_doer = array_keys((array) $doer_profile);
+                        if (!empty($profile_names_doer[0])) {
+                            $params_doer['doer']->{$profile_names_doer[0]} = $doer_profile[$profile_names_doer[0]];
+                        }
+
+                        if (!empty($profile_names[0])) {
+                            $params_doer['poster']->{$profile_names[0]} = $poster_profile[$profile_names[0]];
+                        }
+
+                        $params_doer['line-item'] = $line_item;
+
+                        //dsm($user->mail, 'mail');
+                        //dsm($params_doer, 'params_doer');
+                        $params['doer'][] = $params_doer['doer'];
+                        $send_emails[$user->mail] = $params_doer;
+
+                    }
+
+                    foreach ($send_emails as $email => $parameters) {
+                        $language = user_preferred_language($parameters['doer']);
+                        $par = $parameters;
+                        $par['doer'] = $params['doer'];
+                        drupal_mail('gladlydo_workflow', 'notify_doer_job_live', $email, $language, $par);
+                    }
+
+                    //$line_item->field_add_doers = NULL;
+                    //commerce_line_item_save($line_item);
+                    //entity_get_controller('commerce_line_item')->resetCache(array($line_item->line_item_id));
+                }
+                $language = user_preferred_language($poster);
+                drupal_mail('gladlydo_workflow', 'notify_poster_job_live', $poster->mail, $language, $params);
+                //dsm($params);
+
+                break;
+        }
+    }
+}
+
+/**
+ * Implements hook_mail()
+ * @param $key
+ * @param $message
+ * @param $params
+ */
+function gladlydo_workflow_mail($key, &$message, $params) {
+
+    $data['doer'] = $params['doer'];
+    $data['poster'] = $params['poster'];
+
+    $data['line-item'] = $params['line-item'];
+    $data['commerce-order'] = $params['commerce-order'];
+    $options['language'] = $message['language'];
+    //dsm($data, 'data');
+    //commerce_line_item_tokens($variables, $data, $options);
+    user_mail_tokens($variables, $data, $options);
+    switch ($key) {
+        case 'notify_doer_job_cancelled':
+            $subject = variable_get('notify_doer_job_cancelled_subject');
+            $message['subject'] = token_replace($subject, $data);
+            $body = variable_get('notify_doer_job_cancelled_body');
+            $message['body'][] = token_replace($body, $data);
+            break;
+        case 'notify_doer_job_live':
+            $subject = variable_get('notify_doer_job_live_subject');
+            $message['subject'] = token_replace($subject, $data);
+            $body = variable_get('notify_doer_job_live_body');
+            $message['body'][] = token_replace($body, $data);
+            break;
+        case 'notify_poster_job_live':
+            $subject = variable_get('notify_poster_job_live_subject');
+            $message['subject'] = token_replace($subject, $data);
+            $body = variable_get('notify_poster_job_live_body');
+            $message['body'][] = token_replace($body, $data);
+            break;
+        case 'notify_poster_job_closed':
+            $subject = variable_get('notify_poster_job_closed_subject');
+            $message['subject'] = token_replace($subject, $data);
+            $body = variable_get('notify_poster_job_closed_body');
+            $message['body'][] = token_replace($body, $data);
+            break;
+        case 'giftcard_purchase':
+            //$subject = variable_get('notify_poster_job_closed_subject');
+            //$message['subject'] = token_replace($subject, $data);
+            $message['subject'] = 'subject';
+            //$body = variable_get('notify_poster_job_closed_body');
+            //$message['body'][] = token_replace($body, $data);
+            $message['body'][] = $params['text_email'];
+            break;
+    }
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function gladlydo_workflow_form_alter(&$form, &$form_state, $form_id) {
+    if (strpos($form_id, 'commerce_cart_add_to_cart_form_') === 0) {
+        if (user_is_anonymous()) {
+            $query = new EntityFieldQuery;
+
+            $query->entityCondition('entity_type', 'node', '=')
+                ->fieldCondition('field_product', 'product_id', $form['product_id']['#value'], '=')
+                ->range(0, 1);
+
+            if ($result = $query->execute()) {
+                // Return node id.
+                $nid = array_shift(array_keys($result['node']));
+                $_SESSION['nid_after_login'] = $nid;
+                drupal_goto('user/login');
+            }
+        } else if ($form['line_item_fields']['#entity']->type == 'product') {
+            
+            $form['line_item_fields']['tos'] = array(
+                '#type' => 'checkbox',
+                '#weight' => 99,
+                '#required' => TRUE,
+                '#description' => '',
+                '#title' => t('I have read and agree to the GladlyDo').' '. l(t('Terms & Conditions'), 'node/39953'),
+            );
+            //krumo($form);
+        }
+    }
+
+    if ($form_id == 'user_register_form' && arg(0) == 'poster' && arg(1) == 'register') {
+
+        //$form['#action'] = '/poster/register';
+      /*module_load_include('inc', 'profile2_regpath');
+
+      // Logintoboggan might display user_register_form on 403 pages.
+      if (module_exists('logintoboggan') && variable_get('site_403') == 'toboggan/denied' && strpos(drupal_get_http_header('Status'), '403') === 0) {
+          $profile_types = profile2_regpath_get_profiles('user');
+      }
+      else {
+          // Get profile2 profile types from current path.
+          $url = drupal_parse_url(current_path());
+          $path = ltrim($url['path'], '/');
+
+          // Check to see if this is an alias. If so, use source path.
+          if ($source = drupal_lookup_path('source', $path)) {
+              $path = $source;
+          }
+
+          // Grab first part of URL.
+          $path_parts = explode('/', $path);
+          $path_key = reset($path_parts);
+
+          // Load profiles for this path key and attach associated fields.
+          $profile_types = profile2_regpath_regpath_load_multiple(array('path' => $path_key, 'status' => 1));
+      }
+
+      profile2_regpath_attach_profile_fields($form, $form_state, $form_id, $profile_types);
+      //dsm($form, 'gladly');*/
+        // Get profile2 profile types from current path.
+        $url = drupal_parse_url(current_path());
+        $path = explode('/', str_replace('/register', '', $url['path']));
+        $path_key = end($path);
+        $profile_types = profile2_regpath_get_profiles($path_key);
+        profile2_regpath_attach_profile_fields($form, $form_state, $form_id, $profile_types);
+  }
+}
+
+
+/**
+ * hook that provides information about the tokens implemented by a module.
+ */
+function gladlydo_workflow_token_info() {
+    $tokens['poster']['field-first-name-poster'] = array(
+        'name' => t('Poster Firstname'),
+        'description' => t('Poster Firstname.'),
+    );
+    $tokens['poster']['poster-larst-name'] = array(
+        'name' => t('Poster Lastname'),
+        'description' => t('Poster Lastname.'),
+    );
+    $tokens['poster']['field-phone-number-poster'] = array(
+        'name' => t('Poster Phone'),
+        'description' => t('Poster Phone.'),
+    );
+
+    return array(
+        'tokens' => array('poster' => $tokens),
+    );
+}
+
+/**
+ * Implements hook_token_info_alter().
+ */
+function gladlydo_workflow_token_info_alter(&$info) {
+    $info['tokens']['commerce-order']['plaintext-product-line-items'] = array(
+        'name' => t("Plain-text summary of an order's product line items."),
+        'description' => t('Provides a plain-text summary of the product line items on a given order.'),
+    );
+    $info['tokens']['commerce-order']['plaintext-shipping-line-items'] = array(
+        'name' => t("Plain-text summary of an order's shipping line items."),
+        'description' => t('Provides a plain-text summary of the shipping line items on a given order.'),
+    );
+}
+
+
+/**
+ * hook that needs to be implemented to provide the actual values that replace the tokens.
+ */
+function gladlydo_workflow_tokens($type, $tokens, array $data = array(), array $options = array()){
+    $replacements = array();
+    if ($type == 'poster') {
+        foreach ($tokens as $name => $original) {
+            switch ($name) {
+                // replace commerce order total components tokens with actual values
+                // from the order.
+                case 'field-first-name-poster':
+                    $replacements[$original] = $data['poster']->test->field_first_name_poster['und'][0]['value'];
+                    break;
+
+                case 'field-last-name-poster':
+                    $replacements[$original] = $data['poster']->test->field_last_name_poster['und'][0]['value'];
+                    break;
+                case 'field-phone-number-poster':
+                    $replacements[$original] = $data['poster']->test->field_phone_number_poster['und'][0]['value'];
+                    break;
+            }
+
+        }
+    } elseif ($type == 'doer') {
+        //dsm($data, 'data');
+        foreach ($tokens as $name => $original) {
+            switch ($name) {
+                // replace commerce order total components tokens with actual values
+                // from the order.
+                case 'doers-list':
+                    $doers_list = '';
+
+                    if (is_array($data['doer'])) {
+                        foreach ($data['doer'] as $doer) {
+                            //dsm($doer, 'doer');
+                            $doers_list .= $doer->i_want_to_be_a_doer->field_first_name_doer['und'][0]['value'];
+                            $doers_list .= ' ';
+                            $doers_list .= $doer->i_want_to_be_a_doer->field_last_name_doer['und'][0]['value'];
+                            $doers_list .= ' - ';
+                            $doers_list .= $doer->i_want_to_be_a_doer->field_phone_number['und'][0]['value'];
+                            $doers_list .= '<br>';
+                        }
+                    }
+                    $replacements[$original] = $doers_list;
+                    //dsm($doers_list, '$doers_list');
+                    break;
+                case 'field-first-name-doer':
+                    $replacements[$original] = $data['doer']->i_want_to_be_a_doer->field_first_name_doer['und'][0]['value'];
+                    break;
+
+                case 'field-last-name-doer':
+                    $replacements[$original] = $data['doer']->i_want_to_be_a_doer->field_last_name_doer['und'][0]['value'];
+                    break;
+                case 'field-phone-number':
+                    $replacements[$original] = $data['doer']->i_want_to_be_a_doer->field_phone_number['und'][0]['value'];
+                    break;
+            }
+
+        }
+    }
+
+    if ($type == 'commerce-order' && !empty($data['commerce-order'])) {
+        foreach ($tokens as $name => $original) {
+            switch ($name) {
+                case 'plaintext-product-line-items':
+                    $product_item = $data['line-item'];
+                    //dsm($product_item);
+
+                    $product_id      = $product_item->commerce_product[LANGUAGE_NONE][0]['product_id'];
+                    $product         = commerce_product_load($product_id);
+                    $product_type    = $product->title;
+                    $product_name    = $product_item->field_job_title_form[LANGUAGE_NONE][0]['value'];
+                    $location        = $product_item->field_job_location[LANGUAGE_NONE][0]['value'];
+                    $time           = $product_item->field_when_do_you_need_us_once[LANGUAGE_NONE][0]['value'];
+                    $line_output  = t(
+                        '<br> @product_name (@product_type) - @time : @location',
+                        array(
+                            '@product_type'    => $product_type,
+                            '@product_name'    => $product_name,
+                            '@time'    => $time,
+                            '@location' => $location,
+                        )
+                    );
+                    //$replacements[$original] = _commerce_plaintext_order_summary_render_product_line_items($data['commerce-order']);
+                    $replacements[$original] = $line_output;
+                    break;
+                case 'plaintext-shipping-line-items':
+                    //$replacements[$original] = _commerce_plaintext_order_summary_render_shipping_line_items($data['commerce-order']);
+                    break;
+            }
+        }
+    }
+
+    //dsm($replacements, 'replacements');
+    return $replacements;
+
+}
+
+/**
+ * Return an array of line item IDs from the order object.
+ *
+ * @param Object  $order  A Commerce Order object.
+ * @return                An array of Commerce Line Item IDs
+ */
+function _commerce_plaintext_order_summary_get_line_items_from_order($order) {
+    return array_map(
+        function ($val) {
+            return $val['line_item_id'];
+        },
+        $order->commerce_line_items[LANGUAGE_NONE]
+    );
+}
+
+/**
+ * Render the output for the product line items for an order
+ *
+ * @param   Object $order  A Commerce Order object.
+ * @return  String         The plain-text output for the product line items on
+ *                         the order.
+ */
+function _commerce_plaintext_order_summary_render_product_line_items($commerce_order) {
+    $line_output   = array();
+    $line_item_ids = _commerce_plaintext_order_summary_get_line_items_from_order($commerce_order);
+    $product_items = commerce_line_item_load_multiple(
+        $line_item_ids,
+        array(
+            'type' => 'product'
+        )
+    );
+    foreach($product_items as $product_item) {
+
+    }
+    return implode(PHP_EOL, $line_output);
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter()
+ * @param $form
+ * @param $form_state
+ */
+function gladlydo_workflow_form_user_admin_settings_alter(&$form, &$form_state) {
+    $form['notify_doer_job_cancelled'] = array(
+        '#group' => 'email',
+        '#type' => 'fieldset',
+        '#title' => t('Email To Doers after job cancelled'),
+        '#collapsible' => TRUE,
+        '#collapsed' => TRUE,
+    );
+
+    $form['notify_doer_job_cancelled']['notify_doer_job_cancelled_subject'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Subject'),
+        '#default_value' => t(variable_get('notify_doer_job_cancelled_subject', 'Your Job Cancelled')),
+        '#group' => 'email'
+    );
+
+    $form['notify_doer_job_cancelled']['notify_doer_job_cancelled_body'] = array(
+        '#type' => 'textarea',
+        '#title' => t('Message body'),
+        '#cols' => 40,
+        '#rows' => 10,
+        '#default_value' => t(variable_get('notify_doer_job_cancelled_body', 'Your Job Cancelled Body')),
+        '#description' => t('Enter email body text'),
+        '#group' => 'email'
+    );
+
+    $form['notify_doer_job_live'] = array(
+        '#group' => 'email',
+        '#type' => 'fieldset',
+        '#title' => t('Email To Doers after job goes live'),
+        '#collapsible' => TRUE,
+        '#collapsed' => TRUE,
+    );
+
+    $form['notify_doer_job_live']['notify_doer_job_live_subject'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Subject'),
+        '#default_value' => t(variable_get('notify_doer_job_live_subject', 'Your GladlyDo job (#[commerce-order:order-number]) is live')),
+        '#group' => 'email'
+    );
+
+    $form['notify_doer_job_live']['notify_doer_job_live_body'] = array(
+        '#type' => 'textarea',
+        '#title' => t('Message body'),
+        '#cols' => 40,
+        '#rows' => 10,
+        '#default_value' => t(variable_get('notify_doer_job_live_body', 'Your Job goes Live Body')),
+        '#description' => t('Enter email body text'),
+        '#group' => 'email'
+    );
+
+    $form['notify_poster_job_live'] = array(
+        '#group' => 'email',
+        '#type' => 'fieldset',
+        '#title' => t('Email To Poster after job goes live'),
+        '#collapsible' => TRUE,
+        '#collapsed' => TRUE,
+    );
+
+    $form['notify_poster_job_live']['notify_poster_job_live_subject'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Subject'),
+        '#default_value' => t(variable_get('notify_poster_job_live_subject', 'Doers have been assigned to your job (#[commerce-order:order-id])')),
+        '#group' => 'email'
+    );
+
+    $form['notify_poster_job_live']['notify_poster_job_live_body'] = array(
+        '#type' => 'textarea',
+        '#title' => t('Message body'),
+        '#cols' => 40,
+        '#rows' => 10,
+        '#default_value' => t(variable_get('notify_poster_job_live_body', 'Job goes Live Body')),
+        '#description' => t('Enter email body text'),
+        '#group' => 'email'
+    );
+
+    $form['notify_poster_job_closed'] = array(
+        '#group' => 'email',
+        '#type' => 'fieldset',
+        '#title' => t('Email To Poster after job closed'),
+        '#collapsible' => TRUE,
+        '#collapsed' => TRUE,
+    );
+
+    $form['notify_poster_job_closed']['notify_poster_job_closed_subject'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Subject'),
+        '#default_value' => t(variable_get('notify_poster_job_closed_subject', 'Your job (#[commerce-order:order-id]) closed')),
+        '#group' => 'email'
+    );
+
+    $form['notify_poster_job_closed']['notify_poster_job_closed_body'] = array(
+        '#type' => 'textarea',
+        '#title' => t('Message body'),
+        '#cols' => 40,
+        '#rows' => 10,
+        '#default_value' => t(variable_get('notify_poster_job_closed_body', 'Job closed Body')),
+        '#description' => t('Enter email body text'),
+        '#group' => 'email'
+    );
+}

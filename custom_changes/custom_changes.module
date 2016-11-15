@@ -1,0 +1,546 @@
+<?php
+
+function custom_changes_views_api() {
+    return array(
+        'api' => 3,
+        'path' => drupal_get_path('module', 'custom_changes'),
+        'template path' => drupal_get_path('module', 'custom_changes') . '/themes',
+    );
+}
+
+/**
+ * Implements hook_commerce_checkout_pane_info_alter().
+ */
+function custom_changes_commerce_checkout_pane_info_alter(&$checkout_panes) {
+    global $user;
+    $order = commerce_cart_order_load($user->uid);
+    $line_item = (!empty($order->commerce_line_items['und'][0]['line_item_id'])) ? commerce_line_item_load($order->commerce_line_items['und'][0]['line_item_id']) : NULL;
+    $product = (!empty($line_item->commerce_product['und'][0]['product_id'])) ? commerce_product_load($line_item->commerce_product['und'][0]['product_id']) : NULL;
+
+    //dsm($product);
+
+
+    if (isset($product->type)) {
+
+        if (isset($checkout_panes['commerce_payment'])) {
+           $checkout_panes['commerce_payment']['title'] = t('Credit card details');
+        }
+        //if (isset($checkout_panes['commerce_coupon'])) {
+        //    $checkout_panes['commerce_coupon']['title'] = t('Have a coupon or gift card?  Enter here:');
+            //$checkout_panes['commerce_coupon']['fieldset'] = 1;
+        //}
+
+        //only for giftcards
+        if ($product->type == 'giftcard') {
+            if (isset($checkout_panes['checkout_review'])) {
+                $checkout_panes['checkout_review']['enabled'] = FALSE;
+            }
+
+            if (isset($checkout_panes['checkout_completion_message'])) {
+                $checkout_panes['checkout_completion_message']['enabled'] = FALSE;
+            }
+
+            if (isset($checkout_panes['cart_contents'])) {
+                $checkout_panes['cart_contents']['enabled'] = FALSE;
+            }
+
+            if (isset($checkout_panes['commerce_shipping'])) {
+                $checkout_panes['commerce_shipping']['enabled'] = FALSE;
+            }
+
+            if (isset($checkout_panes['customer_profile_shipping'])) {
+                $checkout_panes['customer_profile_shipping']['enabled'] = FALSE;
+            }
+        }
+    }
+    //dsm($checkout_panes);
+}
+
+/**
+ * Implements hook_commerce_checkout_page_info_alter().
+ */
+function custom_changes_commerce_checkout_page_info_alter(&$checkout_pages) {
+    //dsm($checkout_pages, '$checkout_pages');
+}
+
+
+function custom_changes_menu_alter(&$items) {
+    // Hides address book tab in user profile pages
+    $items['user/%/addressbook']['type'] = MENU_CALLBACK;
+}
+
+function custom_changes_form_alter(&$form, &$form_state, $form_id) {
+    // Add to Cart form
+    // If there are line item fields, we assume that it's an add to cart form
+    if(isset($form['line_item_fields']) && $form['line_item_fields']['#entity']->type != 'giftcard_purchase'){
+        if($form['line_item_fields']['field_job_title_form']){
+            // Set placeholder on job creation form
+            $form['line_item_fields']['field_job_title_form']['und'][0]['value']['#attributes']['placeholder'][] = t('Rake My Leaves or Walk My 2 Year Old Puppy');
+            $form['line_item_fields']['field_job_location']['und'][0]['value']['#attributes']['placeholder'][] = t('78 Congress St. Boston, MA, 02210');
+            $form['line_item_fields']['field_number_of_hours_aggregated']['#access'] = 0;
+            $form['line_item_fields']['field_number_of_doers_aggregated']['#access'] = 0;
+        }
+
+        // Alter "add to cart" button text
+        $form['submit']['#value'] = 'Submit your job';          
+    }
+
+/*
+    // Add one click button to product page.
+    if (isset($form['line_item_fields']) && $form['line_item_fields']['#entity']->type == 'giftcard_purchase') {
+        $form['commerce_buy_one_click_button'] = array(
+            '#type' => 'submit',
+            '#value' => t('Buy Giftcard'),
+            '#weight' => 51,
+            '#prefix' => _commerce_buy_one_click_add_to_cart_form_prefix($form, $form_state),
+            '#suffix' => '</div>',
+            '#attributes' => array('class' => array('commerce-buy-one-click-button')),
+        );
+
+        // Disable 1-click button if product is out of stock.
+        if (variable_get('commerce_buy_one_click_respect_stock_module', TRUE) && module_exists('commerce_stock')) {
+            $qty = 1;
+            if (!empty($form['quantity']['#default_value'])) {
+                $qty = $form['quantity']['#default_value'];
+            }
+            $form['commerce_buy_one_click_button']['#disabled'] = !commerce_buy_one_click_stock_product_amount_possible_to_add($form['product_id']['#value'], $qty);
+        }
+        $form['submit']['#access'] = FALSE;
+    }*/
+
+    if($form_id) {
+        if ($form_id == 'commerce_checkout_form_complete') {
+            $line_item_id = $form_state['order']->commerce_line_items['und'][0]['line_item_id'];
+            $line_item = commerce_line_item_load($line_item_id);
+
+            if ($line_item->type == 'giftcard_purchase') {
+
+                $giftcard_id = $line_item->commerce_giftcards['und'][0]['target_id'];
+
+                $query = db_select('commerce_coupon', 'c')
+                    ->fields('c', array('code'));
+                $query
+                    ->condition('c.status', 1)
+                    ->condition('c.coupon_id', $giftcard_id);
+
+                $code = $query->execute()->fetchField();
+
+                //dsm($form_state['order'], 'erder');
+                //$line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+                //$coupon = $line_item_wrapper->commerce_giftcard->value();
+                //dsm($line_item, 'line');
+
+                //dsm($code, 'code');
+                drupal_get_messages();
+                
+                $text_email = t("Good choice!  You just made someone pretty happy.  Ok, we'll do the rest.<br>
+                A gift card has been sent to the email that you selected as the recipient.   Yup, we said you were the awesome person who sent the gift.<br>
+                We also sent you are a receipt.<br>
+                Thanks for spreading the love.<br> ", array('@code' => $code));
+                $form['checkout_completion_message']['message']['#markup'] = $text_email;
+
+                global $user;
+                $mail = $user->mail;
+
+                if (!empty($line_item->commerce_gc_mail)) {
+                    $mail = $line_item->commerce_gc_mail;
+                }
+
+                if (!empty($line_item->commerce_gc_message)) {
+                    $text_email .= $line_item->commerce_gc_message;
+                }
+
+                //$language = user_preferred_language($user);
+
+                //drupal_mail('gladlydo_workflow', 'giftcard_purchase', $mail, $language, array('text_email' => $text_email));
+
+            }
+        }
+        //dsm($form_id);
+        // Checkout Form
+        if($form_id == 'commerce_checkout_form_checkout'){
+            //dsm($form, 'form');
+            //change review text
+            $form['checkout_review']['#title'] = 'Almost done! Just two more steps.<br> Please review your job details and enter your billing details.';
+            // Move zip up
+            $form['customer_profile_billing']['commerce_customer_address']['und'][0]['locality_block']['administrative_area']['#weight'] = 100;
+            // Add validation
+            $form['buttons']['continue']['#validate'][] = 'line_item_count';
+            $form['commerce_coupon']['#title'] = t('Have a coupon or gift card?  Enter here:');
+            unset($form['commerce_coupon']['coupon_code']['#title']);
+            //unset($form['customer_profile_billing']['commerce_customer_address']['und'][0]['country']);
+
+            $order = $form_state['build_info']['args'][0]->order_number;
+            $wrapper = entity_metadata_wrapper('commerce_order', $order);
+        }
+
+        //Expense node/add form
+        if($form_id == 'expences_node_form'){
+            $form['field_price']['und'][0]['amount']['#field_prefix'] = '$';
+        }
+
+        //Work order (job completion modal) node/add form
+        if($form_id == 'work_order_node_form') {
+            $form['field_time_spent_on_job']['und'][0]['value']['#field_suffix'] = 'Hours';
+            $form['actions']['submit']['#value'] = 'Mark As Complete';
+        }  
+
+        //Doer application reigster form
+        if($form_id == 'user_register_form' && $form['#action'] == '/doer/register') {
+            $form['actions']['submit']['#value'] = "Submit Your Application";
+            $form['profile_i_want_to_be_a_doer']['#prefix'] = '<div class="form-wrapper">Sign up to be a doer.<br>We’ll send you jobs that you choose based<br>on your schedule.  It’s that easy.</div>';
+            //dsm($form);
+
+            $form['account']['pass']['#description'] = FALSE;
+            $form['account']['mail']['#description'] = 'Enter a personal or school email address. This will be the address that we’ll use to communicate with you. The email address is not made public and will only be used if you wish to receive a new password and/or receive certain newsletters.';
+            //print '<pre>';
+            //print_r($form);
+            //print_r($form);
+            //print '</pre>';
+        }
+
+        //Poster application register form
+        if($form_id == 'user_register_form' && $form['#action'] == '/poster/register') {
+            //print '<pre>';
+            //print_r($form);
+            //print '</pre>';
+
+            $form['account']['pass']['#description'] = FALSE;
+            $form['profile_test']['#prefix'] = '<div class="form-wrapper">Good choice!<br>Just enter some info to get started.</div>';
+            $form['#submit'][] = 'custom_changes_register_submit';
+
+            $form['actions']['submit']['#value'] = "Let's Go!";
+        }
+
+        //User Profile form
+        if($form_id == 'user_profile_form'){
+            // Redirect to user page after submitting form
+            $form['#submit'][] = 'profile_form_submit';
+        }
+
+        //Doer Bank Account Form 
+        if($form_id == 'worker_stripe_verification2'){
+            // Add bank account node when bank account added
+            $form['#submit'][] = 'bank_account_submit';
+            dpm($form);
+        }
+
+        //Leave Job node creation form
+        if($form_id == 'leave_job_node_form') {
+            $form['actions']['submit']['#submit'][] = 'leave_job_form_submit';
+        }
+
+        //Commerce Backoffice Order Status (Used on Job Board)
+        if($form_id == 'commerce_backoffice_order_status_form') {
+            if(isset($form['status'])) {
+                // Remove list items
+                //unset($form['status']['#options']['Canceled']);
+                //unset($form['status']['#options']['Shopping cart']);
+                unset($form['status']['#options']['Checkout']);
+                unset($form['status']['#options']['Pending']['leave_job']);
+                unset($form['status']['#options']['Checkout']['new']);
+                unset($form['status']['#options']['Pending']['assigned']);
+                unset($form['status']['#options']['Checkout']['done']);
+                unset($form['status']['#options']['Pending']['processing']);
+                //unset($form['status']['#options']['Pending']['early_pay']);
+                unset($form['status']['#options']['Pending']['processing']);
+                unset($form['status']['#options']['Pending']['timesheets_collected']);
+                //unset($form['status']['#options']['Pending']['cardonfile_payment_error_hard_decline']);
+                // unset($form['status']['#options']['Pending']['cardonfile_payment_failed_soft_decline']);
+                unset($form['status']['#options']['Pending']['payment_requested']);
+                unset($form['status']['#options']['Pending']['done']);
+                unset($form['status']['#options']['Pending']['new']);
+                unset($form['status']['#options']['Pending']['closed_status']);
+                unset($form['status']['#options']['Pending']['invoice_prepared']);
+                unset($form['status']['#options']['Invoiced']);
+
+                // Add/move list items
+                $form['status']['#options']['Completed']['closed_status'] = 'Closed';
+
+                //Reorder elements
+                //nothing yet
+            }
+        }
+        
+        //Poster Job Edit Form 
+        if($form_id == 'editableviews_entity_form_poster_edit_job_info') {
+            $form['#submit'][] = 'job_edit_submit';
+        }
+
+        if (strpos($form_id, 'commerce_cart_add_to_cart_form_') === 0 && isset($form['product_id'])) {
+            $form['product_id']['#title'] = 'Gift Card Amount';
+            $form['product_id']['#required'] = TRUE;
+
+            $form['line_item_fields']['commerce_gc_mail']['und'][0]['email']['#title'] = 'Recipient\'s Email Address';
+            $form['line_item_fields']['commerce_gc_mail']['und'][0]['email']['#required'] = TRUE;
+            $form['line_item_fields']['commerce_gc_message']['und'][0]['value']['#title'] = 'Optional Message';
+            //dsm($form);
+        }
+
+        if (strpos($form_id, 'commerce_cart_add_to_cart_form_') === 0 && $form['line_item_fields']['#entity']->type != 'giftcard_purchase') {
+
+            //date_default_timezone_set('EST');
+            $current_date = date('m/d/Y');
+            $tomorrow_date = date("m/d/Y", strtotime("+1 day"));
+
+            $visible_time = array();
+
+            $time = time();
+            $round = 15*60;
+            $rounded = round($time / $round) * $round;
+
+            $h = date('g');
+
+            //dsm(date('m/d/Y g:ia',$rounded), "date");
+            if (date('i',$rounded) == 0) {
+                $h--;
+            }
+            $am_pm = date('a') == 'pm' ? 'am' : 'pm';
+
+            for ($hour = $h; $hour >= 0; $hour--) {
+                for ($digit = 0; $digit < 60; $digit = $digit+15) {
+                    $visible_time[] = array('value' => $hour . ':' . str_pad($digit, 2, '0', STR_PAD_LEFT) . date('a'));
+                }
+            }
+
+            if ($am_pm == 'am') {
+                for ($hour = 12; $hour > 0; $hour--) {
+                    for ($digit = 0; $digit < 60; $digit = $digit+15) {
+                        $visible_time[] = array('value' => $hour . ':' . str_pad($digit, 2, '0', STR_PAD_LEFT) . $am_pm);
+                    }
+                }
+            }
+
+
+            foreach ($visible_time as $key => $val) {
+                if (strpos($val['value'], '0:') === 0) {
+                    $visible_time[$key] = array('value' => str_replace('0:', '12:', $val['value']));
+                }
+            }
+            //dsm($visible_time);
+            $date_selector = ':input[name="line_item_fields[field_when_do_you_need_us_once][und][0][value][date]"]';
+            $time_selector = ':input[name="line_item_fields[field_when_do_you_need_us_once][und][0][value][time]"]';
+
+            //$visible_options = array('5:00pm', '6:00pm', '7:00pm');
+
+
+            /*foreach ($visible_options as $i => $option) {
+                $visible_time[] = array('value' => $option);
+            }*/
+
+            $form['line_item_fields']['field_when_do_you_need_us_once'][LANGUAGE_NONE][0]['#description'] = t('Time zone is Eastern Standard time');
+            $form['line_item_fields']['field_when_do_you_need_us_once']['within_a_day_of_start_time'] = array(
+                '#type' => 'checkbox',
+                '#weight' => 13,
+                '#required' => FALSE,
+                '#description' => t('In a pinch? We know that things happen and we’ve got your back! For jobs posted within 24 hours of their start time, we will try our darndest to find you a doer - however we can’t guarantee that your job will be filled in time. Please note that there is a 20% “in a pinch” price boost that will increase the likelihood that your job is filled in time. Otherwise, we can always schedule you for a later date.'),
+                '#title' => t('I understand that:'),
+                '#states' => array(
+                    'visible' => array(
+                        array(
+                            array($date_selector => array('value' => $current_date)),
+                            'or',
+                            array(
+                                $time_selector => array($visible_time),
+                                $date_selector => array('value' => $tomorrow_date),
+                            ),
+                        ),
+
+                    ),
+                ),
+            );
+
+            //dsm($form);
+            //print_r($form);
+        }
+    }
+
+    // Shopping Cart form
+    if (isset($form['#prefix'])) {
+        $editcheck = $form['#prefix'];
+        if (strpos($editcheck,'editablefields-field') !== false) {
+            $form['actions']['edit']['#value'] = "";
+        } 
+    }
+}
+
+// Redirect to custom page after register (Poster)
+function custom_changes_register_submit($form, &$form_state) {
+    $form_state['redirect'] = 'node/195';
+}
+
+// Submit function for user profile form
+function profile_form_submit($form, &$form_state) {
+    $form_state['redirect'] = 'user';
+}
+
+// Submit function for leave job node creation form
+function leave_job_form_submit($form, &$form_state) {
+
+    //Get current messages and clear them.
+    $messages = drupal_get_messages('status');
+    $order_id = $form_state['values']['field_order_id']['und'][0]['target_id'];
+    drupal_set_message(t('You have left Job #'.$order_id));
+
+}
+
+// Submit functions for poster job edit form
+function job_edit_submit($form, &$form_state) {
+    $form_state['redirect'] = 'poster-views';
+    drupal_set_message(t('Your job has been updated'), 'status');
+}
+
+function job_edit_message_remove($form, &$form_state) {
+    //Get current messages and clear them.
+    $messages = drupal_get_messages('status');
+}
+
+// Validation for checkout form
+// Counts line items and errors if more than one
+function line_item_count($form, &$form_state) { 
+    //dpm($form_state);
+    $order = $form_state['build_info']['args'][0]->order_number;
+    $wrapper = entity_metadata_wrapper('commerce_order', $order);
+
+    foreach ($wrapper->commerce_line_items as $delta => $wrapper_line_item) {
+        //$title = $wrapper_line_item->commerce_product->title->value();
+        //$type = $wrapper_line_item->commerce_product->type->value();
+        //$bundle = $wrapper_line_item->getBundle();
+
+        //dsm($title, 'title');//        title => Shoveling
+        //dsm($type, 'tipe'); // tipe => yard_work
+        //dsm($bundle, '$bundle');//    $bundle => product  $bundle => giftcard_use
+
+        if (in_array($wrapper_line_item->type->value(), commerce_product_line_item_types())) {
+            // Increment counters
+            // Individual product line item
+            $product_count++;
+            // Number of items of product line item (quantity)
+            //$product_quantity_count += $wrapper_line_item->quantity->value();
+        }
+        /*drupal_set_message(t('User has %count products in cart with a total of %quantity items',
+                array('%count' => $product_count, '%quantity' => $product_quantity_count)));*/
+        /*
+        if ($wrapper_line_item->getBundle() == 'product_discount') {
+            // Delete the line item, and remove it from the order.
+            $line_items_to_delete[] = $wrapper_line_item->line_item_id->value();
+            $wrapper->commerce_line_items->offsetUnset($delta);
+        }
+        */
+    }
+
+    //$quantity = commerce_line_items_quantity($wrapper->commerce_line_items, commerce_product_line_item_types());
+
+    $num_line_items = count($wrapper->commerce_line_items->value());
+    //dsm($quantity, '$quantity');
+    //dsm($num_line_items, '$num_line_items');
+
+ //if ($quantity > 1) {
+ if ($product_count > 1) {
+     drupal_set_message(t('You cannot have more than 1 job in your cart at checkout. Please remove jobs below until only 1 job is remaining, and then return to checkout. If you need more than one job done, please complete checkout for each job separately'), 'error');
+     drupal_goto('/cart');
+ }
+}
+
+// Calls function to rebase price when hourly rate is changed
+function custom_changes_form_commerce_backoffice_order_status_form_alter(&$form, &$form_state, $form_id) {
+    $form['#submit'][] = 'order_status_form_submit';
+}
+
+function order_status_form_submit($form, &$form_state) {
+    // Submit function to rebase commerce price when recalculating order
+    $line_item_id = $form_state['order']->commerce_line_items['und'][0]['line_item_id'];
+    $line_item = commerce_line_item_load($line_item_id);
+    $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+    $line_item_wrapper->commerce_unit_price->amount = $line_item->field_unit_price_updateable['und'][0]['amount'];
+    $line_item_wrapper->commerce_unit_price->data->components->price->amount = $line_item->field_unit_price_updateable['und'][0]['amount'];
+    commerce_line_item_rebase_unit_price($line_item_wrapper->value());
+    commerce_line_item_save($line_item_wrapper->value());    
+}
+
+// Adds masquerade link to masquerade menu
+function custom_changes_menu() {
+    if(module_exists('masquerade')) {
+        $items['masquerade/unswitch'] = array(
+            'access callback' => 'masquerade_menu_access',
+            'access arguments' => array('unswitch'),
+            'page callback' => 'custom_changes_masquerade_unswitch',
+            'page arguments' => array(),
+            'title' => 'Masquerade Switch Back',
+            'weight' => 100,
+            'menu_name' => 'menu-masquerade',
+            'type' => MENU_NORMAL_ITEM,
+        );
+    }
+
+    return $items;
+}
+
+// Adds masquerade link to masquerade menu
+function custom_changes_masquerade_unswitch() {
+    $token = drupal_get_token('masquerade/unswitch');
+    if (isset($token)) {
+        global $user;
+        $olduser = $user;
+        masquerade_switch_back();
+        drupal_set_message(t('You are no longer masquerading as !masq_as and are now logged in as !user.', array('!user' => theme('username', array('account' => $user)), '!masq_as' => theme('username', array('account' => $olduser)))));
+        drupal_goto($_SERVER['HTTP_REFERER']);
+    }
+    else {
+        drupal_access_denied();
+    }
+}
+
+function custom_changes_preprocess_page(&$variables) {
+    $current_path = current_path();
+    $receipt_page = 'reciepts-for-processing';
+    if (strpos($haystack = $current_path, $needle = $receipt_page) !== false) {
+        drupal_set_message(t("You have successfully added your bank account information. Now you just need to <a href='/doer-views'>sign up for some jobs</a> so we can pay you! <br /> (If you see any weird messages below, please <a href='mailto:info@gladlydo.com'>let us know</a>. We're still working out some kinks on our end.)"),'status');
+    }   
+}
+
+// Create Bank Account Node
+function bank_account_submit($form, &$form_state) {
+    dpm($form_state);
+    /*
+  global $user;
+  // Stripe API
+
+
+
+  //Create Node
+  $node = new stdClass();
+  $node->title = "Bank Account For ".$user->name;
+  $node->type = "bank_account";
+  node_object_prepare($node); // Sets some defaults. Invokes hook_prepare() and hook_node_prepare().
+  $node->language = LANGUAGE_NONE; // Or e.g. 'en' if locale is enabled
+  $node->uid = $user->uid; 
+  $node->status = 1; //(1 or 0): published or not
+  $node->promote = 0; //(1 or 0): promoted to front page
+  $node->comment = 1; // 0 = comments disabled, 1 = read only, 2 = read/write
+
+  // Term reference (taxonomy) field
+  $node->field_product_tid[$node->language][]['tid'] = $form_state['values']['a taxonomy term id'];
+
+  // Entity reference field
+  $node->field_customer_nid[$node->language][] = array(
+    'target_id' => $form_state['values']['entity id'],
+    'target_type' => 'node',
+  );
+  // 'node' is default,
+  // Other possible values are "user" and  "taxonomy_term" 
+
+  $node = node_submit($node); // Prepare node for saving
+  node_save($node);
+  //drupal_set_message( "Node with nid " . $node->nid . " saved!\n");
+  $form_state['redirect']  = 'SOME WHERE';
+  */
+}
+
+function custom_changes_commerce_order_presave($order) {
+
+}
+
+function custom_changes_form_job_report_details(&$form, &$form_state, $form_id) {
+
+}

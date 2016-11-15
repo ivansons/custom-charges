@@ -1,0 +1,4 @@
+name = Stripe Bank Account
+description = Provides form and function for saving doer bank accounts
+package = Custom
+core = 7.x

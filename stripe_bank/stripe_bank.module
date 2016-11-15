@@ -1,0 +1,483 @@
+<?php
+
+function stripe_bank_menu() {
+    $items = array();
+
+    $items['bank-account-add'] = array( //this creates a URL that will call this form at "examples/form-example"
+        'title' => 'Add A Bank Account', //page title
+        'description' => 'Fill out the below information to add a bank account to your GladlyDo account.',
+        'page callback' => 'drupal_get_form', //this is the function that will be called when the page is accessed.  for a form, use drupal_get_form
+        'page arguments' => array('stripe_bank_account_form'), //put the name of the form here
+        'access callback' => '_user_has_role',
+        'access arguments' => array(array('doer')),
+    );
+
+    $items['edit-stripe-account'] = array(
+        'title' => 'Edit Stripe Account', //page title
+        'description' => 'Edit Stripe information.',
+        'page callback' => 'drupal_get_form', //this is the function that will be called when the page is accessed.  for a form, use drupal_get_form
+        'page arguments' => array('stripe_edit_account_form'), //put the name of the form here
+        'access callback' => '_user_has_role',
+        'access arguments' => array(array('doer')),
+    );
+    return $items;
+}
+
+/**
+ * @param $roles
+ * @return bool
+ */
+function _user_has_role($roles) {
+
+    if (user_is_logged_in()) {
+        global $user;
+        if (in_array('administrator', $user->roles)) {
+            return TRUE;
+        }
+        foreach ($roles as $role) {
+            if (in_array($role, $user->roles)) {
+                return TRUE;
+            }
+        }
+    } else {
+        return FALSE;
+    }
+}
+
+function stripe_bank_account_form($form, &$form_state) {
+    $form['first_name'] = array(
+        '#type' => 'textfield',
+        '#title' => 'First Name',
+        '#size' => 60,
+        '#required' => TRUE,
+    );
+
+    $form['last_name'] = array(
+        '#type' => 'textfield',
+        '#title' => 'Last Name',
+        '#size' => 60,
+        '#required' => TRUE,
+    );
+    module_load_include('inc', 'addressfield', 'addressfield.administrative_areas');
+    $states = _addressfield_get_administrative_areas_defaults();
+
+
+    $form['state'] = array(
+        '#type' => 'select',
+        '#title' => 'State',
+        '#options' => array_combine($states['US'], $states['US']),
+        '#required' => TRUE,
+    );
+
+    $form['city'] = array(
+        '#type' => 'textfield',
+        '#title' => 'City',
+        '#size' => 60,
+        '#required' => TRUE,
+    );
+
+    $form['address'] = array(
+        '#type' => 'textfield',
+        '#title' => 'Address',
+        '#size' => 60,
+        '#required' => TRUE,
+    );
+
+    $form['postal_code'] = array(
+        '#type' => 'textfield',
+        '#title' => 'ZIP code',
+        '#size' => 60,
+        '#required' => TRUE,
+    );
+
+    $date = '2008-12-31 00:00:00';
+    $format = 'm-d-Y';
+    $format2 = 'm-d-Y G:i';
+    $form['date'] = array(
+        '#type' => 'date_select', // types 'date_text' and 'date_timezone' are also supported. See .inc file.
+        '#title' => t('Birthday'),
+        '#default_value' => $date,
+        '#date_format' => $format,
+        '#date_label_position' => 'within', // See other available attributes and what they do in date_api_elements.inc
+        '#date_year_range' => '-80:+0', // Optional, used to set the year range (back 3 years and forward 3 years is the default).
+        '#required' => TRUE,
+    );
+
+    $form['tos_date'] = array(
+        '#type' => 'date_select', // types 'date_text' and 'date_timezone' are also supported. See .inc file.
+        '#title' => t('Current Date'),
+        '#default_value' => 'now',
+        '#date_format' => $format2,
+        '#date_label_position' => 'within', // See other available attributes and what they do in date_api_elements.inc
+        '#date_year_range' => '-0:+0', // Optional, used to set the year range (back 3 years and forward 3 years is the default).
+        '#required' => TRUE,
+    );
+
+    $form['bank'] = array(
+        '#type' => 'textfield',
+        '#title' => 'Bank Account #',
+        '#size' => 30,
+        '#required' => TRUE,
+        '#value' => 'xxxxxxxxx',
+        '#description' => 'Please make sure this field does not contain any spaces, letters, or special characters.'
+    );
+
+    $form['routing'] = array(
+        '#type' => 'textfield',
+        '#title' => 'Routing #',
+        '#size' => 30,
+        '#required' => TRUE,
+        '#value' => 'xxxxxxxxx',
+        '#description' => 'Please make sure this is 9 numbers long and does not contain any spaces, letters, or special characters.'
+    );
+
+    $form['agree'] = array(
+        '#type' => 'checkbox',
+        '#title' => 'You certify that the information you are submitting is accurate, and that you have the authority to provide us with this information.',
+        '#description' => 'Make sure to click this only after inputting your bank account and routing numbers, or your bank account will not connect correctly. By adding this account, you agree to the <a href="https://stripe.com/connect/account-terms">Stripe Connected Account Agreement</a>. <p>Do not reload or leave this page after clicking "Add Bank Account". It may take up to a minute to process.</p>',
+        '#required' => TRUE,
+    );
+
+    $form['token'] = array(
+        '#type' => 'hidden',
+        '#title' => 'Stripe Token',
+        '#size' => 30,
+        '#required' => TRUE,
+        '#default_value' => '0',
+    );
+
+    $form['submit_button'] = array(
+        '#type' => 'submit',
+        '#value' => t('Add Bank Account'),
+    );
+
+    drupal_add_js(
+        array(
+            'stripe' => array(
+                'stripe_pk' => variable_get('stripe_pk'),
+            ),
+        ),
+        array('type' =>'setting')
+    );
+
+    return $form;
+}
+
+function stripe_edit_account_form($form, &$form_state) {
+    module_load_include('inc', 'addressfield', 'addressfield.administrative_areas');
+    $states = _addressfield_get_administrative_areas_defaults();
+
+    $form['state'] = array(
+        '#type' => 'select',
+        '#title' => 'State',
+        '#options' => array_combine($states['US'], $states['US']),
+        '#required' => TRUE,
+    );
+
+    $form['city'] = array(
+        '#type' => 'textfield',
+        '#title' => 'City',
+        '#size' => 60,
+        '#required' => TRUE,
+    );
+
+    $form['address'] = array(
+        '#type' => 'textfield',
+        '#title' => 'Address',
+        '#size' => 60,
+        '#required' => TRUE,
+    );
+
+    $form['postal_code'] = array(
+        '#type' => 'textfield',
+        '#title' => 'ZIP code',
+        '#size' => 60,
+        '#required' => TRUE,
+    );
+
+    $form['last4'] = array(
+        '#type' => 'textfield',
+        '#title' => 'Last 4 SSN',
+        '#size' => 60,
+        '#required' => TRUE,
+    );
+
+
+    $form['submit_button'] = array(
+        '#type' => 'submit',
+        '#value' => t('Save'),
+    );
+    /*
+    global $user;
+    $profile = profile2_load_by_user($user->uid, 'i_want_to_be_a_doer');
+    $wrapper = entity_metadata_wrapper('profile2', $profile);
+
+    $acct_id = $wrapper->field_account_id->value();
+    if(!empty($acct_id)) {
+
+        try {
+            require_once DRUPAL_ROOT .'/sites/all/libraries/stripe-php-v3/init.php';
+            \Stripe\Stripe::setApiKey(variable_get('stripe_sk'));
+            $account = \Stripe\Account::retrieve($acct_id);
+
+            $address = $form_state['values']['address'];
+            $city = $form_state['values']['city'];
+            $postal_code = $form_state['values']['postal_code'];
+            $state = $form_state['values']['state'];
+
+
+            //$account->save();
+            //drupal_set_message('Stripe fields were successfully updated.');
+            //drupal_goto('payouts-for-doer');
+
+        } catch (Stripe\Error\Base $e) {
+            // Code to do something with the $e exception object when an error occurs
+            drupal_set_message($e->getMessage());
+        } catch (Exception $e) {
+            // Catch any other non-Stripe exceptions
+            drupal_set_message($e);
+        }
+    }
+    print_r($account);*/
+    return $form;
+}
+
+function stripe_edit_account_form_submit($form, &$form_state) {
+    global $user;
+    $profile = profile2_load_by_user($user->uid, 'i_want_to_be_a_doer');
+    $wrapper = entity_metadata_wrapper('profile2', $profile);
+
+    $acct_id = $wrapper->field_account_id->value();
+    if(!empty($acct_id)) {
+
+        try {
+            require_once DRUPAL_ROOT .'/sites/all/libraries/stripe-php-v3/init.php';
+            \Stripe\Stripe::setApiKey(variable_get('stripe_sk'));
+            $account = \Stripe\Account::retrieve($acct_id);
+
+            $address = $form_state['values']['address'];
+            $city = $form_state['values']['city'];
+            $postal_code = $form_state['values']['postal_code'];
+            $state = $form_state['values']['state'];
+            $last4 = $form_state['values']['last4'];
+
+            $account->legal_entity->address->city = $city;
+            $account->legal_entity->address->line1 = $address;
+            $account->legal_entity->address->postal_code = $postal_code;
+            $account->legal_entity->address->state = $state;
+
+            //'personal_id_number' => NUMBER
+            //$account->legal_entity->ssn_last_4 = substr($bank, -4);
+            $account->legal_entity->ssn_last_4 = $last4;
+
+            $account->save();
+            drupal_set_message('Stripe fields were successfully updated.');
+            drupal_goto('payouts-for-doer');
+
+        } catch (Stripe\Error\Base $e) {
+            // Code to do something with the $e exception object when an error occurs
+            drupal_set_message($e->getMessage());
+        } catch (Exception $e) {
+            // Catch any other non-Stripe exceptions
+            drupal_set_message($e);
+        }
+    }
+    //krumo($form_state);
+}
+
+function stripe_bank_account_form_validate($form, &$form_state) {
+    global $user;
+    $profile = profile2_load_by_user($user->uid, 'i_want_to_be_a_doer');
+    $wrapper = entity_metadata_wrapper('profile2', $profile);
+
+    $acct_id = $wrapper->field_account_id->value();
+    $token_id = $form_state['values']['token'];
+    $first_name = $form_state['values']['first_name'];
+    $last_name = $form_state['values']['last_name'];
+
+    $email = $user->mail;
+
+    $bday = $form_state['values']['date'];
+    $pieces = explode("-", $bday);
+    $bday_year = $pieces[0];
+    $bday_month = $pieces[1];
+    $bday_day = $pieces[2];
+
+    $tos_time = strtotime($form_state['values']['tos_date']);
+    $tos_ip= ip_address();
+
+    $routing = $form_state['values']['routing'];
+    $bank = $form_state['values']['bank'];
+
+    // Add validation ensuring that all the above variables are set
+    if($token_id === 0) {
+        form_set_error('bank',t("Invalid combination of Bank Account and Routing Number. Please verify the information and try again."));
+        form_set_error('routing','');
+    }
+
+}
+
+function stripe_bank_account_form_submit($form, &$form_state) {
+    global $user;
+    $profile = profile2_load_by_user($user->uid, 'i_want_to_be_a_doer');
+    $wrapper = entity_metadata_wrapper('profile2', $profile);
+
+    $acct_id = $wrapper->field_account_id->value();
+    $token_id = $form_state['values']['token'];
+    $first_name = $form_state['values']['first_name'];
+    $last_name = $form_state['values']['last_name'];
+
+    $bank = $form_state['values']['bank'];
+
+    $address = $form_state['values']['address'];
+    $city = $form_state['values']['city'];
+    $postal_code = $form_state['values']['postal_code'];
+    $state = $form_state['values']['state'];
+
+    $email = $user->mail;
+
+    $bday = $form_state['values']['date'];
+    $pieces = explode("-", $bday);
+    $bday_year = $pieces[0];
+    $bday_month = $pieces[1];
+    $bday_day = $pieces[2];
+
+    $tos_time = strtotime($form_state['values']['tos_date']);
+    $tos_ip= ip_address();
+
+    require_once 'Stripe/init.php';
+    \Stripe\Stripe::setApiKey(variable_get('stripe_sk'));
+
+    // Create new stripe account if no account id in user profile
+    if(empty($acct_id)) {
+        $new_acct = \Stripe\Account::create(array(
+            "managed" => true,
+            "country" => "US",
+            "email" => $email,
+            "legal_entity" => array(
+                "first_name" => $first_name,
+                "last_name" => $last_name,
+                "address" => array(
+                    'city' => $city,
+                    'line1' => $address,
+                    'postal_code' => $postal_code,
+                    'state' => $state,
+                    //'personal_id_number' => NUMBER
+                ),
+                "ssn_last_4" => substr($bank, -4),
+                "dob" => array(
+                    "day" => $bday_day,
+                    "month" => $bday_month,
+                    "year" => $bday_year
+                ),
+                "type" => 'individual',
+            ),
+            "tos_acceptance" => array(
+                "date" => $tos_time,
+                "ip" => $tos_ip,
+            ),
+            "transfer_schedule" => array(
+                "interval" => 'daily',
+                //"weekly_anchor" => 'wednesday',
+            ),
+        ));
+
+        $acct_id = $new_acct->id;
+        $profile->field_account_id['und'][0]['value'] = ($acct_id);
+        $profile->field_account_id['und'][0]['safe_value'] = ($acct_id);
+        profile2_save($profile);
+    } else {
+        //krumo('UPDATE');
+    }
+
+    // Add bank account to user
+    $cu = \Stripe\Account::retrieve($acct_id);
+    $new_bank = $cu->external_accounts->create(array(
+        "external_account" => $token_id
+    ));
+
+    // Update Bank Account to be default
+    $account = \Stripe\Account::retrieve($acct_id);
+    $bank_account = $account->external_accounts->retrieve($new_bank->id);
+    $bank_account->default_for_currency = TRUE;
+    $bank_account->save();
+
+    //https://gist.github.com/anonymous/717a1b9463ef11d52163 
+
+    /*To update account information after the account has been created, something like: 
+    $account= \Stripe\Account::retrieve("acct_15yoFhA9nK5NDazx"); 
+    $account->legal_entity->business_name = "General Widgets, Inc"; 
+    echo $account->save();*/
+
+
+    //Create Bank Account node For this Bank Account
+    $values = array(
+        'type' => 'bank_account',
+        'uid' => $user->uid,
+        'status' => 1,
+        'comment' => 1,
+        'promote' => 0,
+    );
+
+    $entity = entity_create('node', $values);
+    $ewrapper = entity_metadata_wrapper('node', $entity);
+    $ewrapper->title->set($first_name.' '.$last_name.' - ID: '.$new_bank->id);
+
+    //Doer Reference
+    $ewrapper->field_doer_ref_single->set(intval($user->uid));
+
+    $ewrapper->field_stripe_user_account_id->set($acct_id);
+    $ewrapper->field_stripe_bank_account_id->set($new_bank->id);
+    $ewrapper->field_bank_account_last_4_digits->set($new_bank->last4);
+    $ewrapper->field_bank_account_name->set($new_bank->bank_name);
+
+    // Now just save the wrapper and the entity
+    // There is some suggestion that the 'true' argument is necessary to
+    // the entity save method to circumvent a bug in Entity API. If there is
+    // such a bug, it almost certainly will get fixed, so make sure to check.
+    $ewrapper->save();
+    $form_state['redirect'] = 'payouts-for-doer';
+
+    drupal_set_message(t('Your bank account has been connected and set as your primary account.'), 'status');
+}
+
+
+//Manual Doer Transfers
+function stripe_bank_form_alter(&$form, &$form_state, $form_id) {
+    //Doer application register form
+    if($form_id == 'webform_client_form_3792') {
+        $form['#submit'][] = 'manual_transfer';
+    }
+}
+
+function manual_transfer ($form, &$form_state) {
+    dpm($form_state);
+    $profile = profile2_load_by_user($form_state['values']['submitted'][1], 'i_want_to_be_a_doer');
+    $wrapper = entity_metadata_wrapper('profile2', $profile);
+    $acct_id = $wrapper->field_account_id->value();
+
+    // Amount returns number of dollars to be paid out
+    $dollars = $form_state['values']['submitted'][2];
+
+    //Convert dollars to number of cents to payout
+    $cents = floatval($dollars)*100;
+
+    if(isset($form_state['values']['submitted'][3]) && !empty($form_state['values']['submitted'][3])) {
+        $order_id = $form_state['values']['submitted'][3];
+        $description = 'Manual Transfer for Job #'.$order_id;
+    }
+
+    else {
+        $description = 'Manual Transfer';
+    }
+
+    require_once DRUPAL_ROOT .'/sites/all/libraries/stripe-php-v3/init.php';
+    \Stripe\Stripe::setApiKey(variable_get('stripe_sk'));
+    \Stripe\Transfer::create(array(
+        "amount" => $cents,
+        "currency" => "usd",
+        "destination" => $acct_id,
+        "description" => $description,
+    ));
+
+}

@@ -1,0 +1,4 @@
+name = Custom Changes  
+description = Primary module for custom site alterations
+package = Custom
+core = 7.x

@@ -1,0 +1,4 @@
+name = Stripe Bank Account ID
+description = Provides form for testing Stripe API
+package = Custom
+core = 7.x

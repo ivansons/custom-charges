@@ -1,0 +1,4 @@
+name = GladlyDo Workflow
+description = Provides GladlyDo Workflow Control
+package = Custom
+core = 7.x
